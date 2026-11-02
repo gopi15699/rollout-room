@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Product, User } from './data';
+import { deliveryEstimate, Product, User } from './data';
 
 type Props = {
   user: User;
@@ -22,6 +22,7 @@ export function Checkout({ user, items, onBack, onPlaceOrder }: Props) {
         </Text>
       ))}
       <Text style={styles.total}>Total: ₹{total}</Text>
+      <Text style={styles.line}>{deliveryEstimate(user.address!)}</Text>
       <Pressable style={styles.button} onPress={onPlaceOrder} testID="place-order">
         <Text style={styles.buttonText}>Place order</Text>
       </Pressable>
