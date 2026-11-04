@@ -1,0 +1,17 @@
+{
+  "users": 200000,
+  "installs_per_second": 100,
+  "baseline_crash_free": 99.9,
+  "versions": {
+    "1.5.0": {
+      "crash_free": 97.4,
+      "spike_after_seconds": 30,
+      "spike_ramp_seconds": 15,
+      "crash": {
+        "title": "TypeError: Cannot read property 'city' of undefined",
+        "frames": ["deliveryEstimate (src/data.ts:18)", "Checkout (src/Checkout.tsx:12)", "App (App.tsx:102)"],
+        "segments": { "guest": 100, "member": 0 }
+      }
+    }
+  }
+}

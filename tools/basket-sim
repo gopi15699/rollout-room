@@ -1,0 +1,75 @@
+#!/bin/bash
+# Runs a checkout of Basket on the room's own simulator and takes a screenshot.
+#   basket-sim <checkout-dir> <guest|member> <screenshot.png>
+# Only one run at a time: agents share the simulator and Metro's port.
+set -uo pipefail
+
+HOME_DIR="${ROLLOUT_ROOM_HOME:-$HOME/.rollout-room}"
+source "$HOME_DIR/config"
+BUNDLE_ID=dev.rolloutroom.basket
+LOCK="$HOME_DIR/sim.lock"
+
+if [ $# -ne 3 ]; then
+  echo "usage: basket-sim <checkout-dir> <guest|member> <screenshot.png>" >&2
+  exit 2
+fi
+CHECKOUT="$(cd "$1" && pwd)" || exit 2
+USER_KIND="$2"
+SHOT="$3"
+
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "basket-sim: another run is using the simulator, try again in a minute" >&2
+  exit 75
+fi
+
+METRO_PID=""
+cleanup() {
+  xcrun simctl terminate "$SIM_UDID" "$BUNDLE_ID" >/dev/null 2>&1
+  [ -n "$METRO_PID" ] && pkill -P "$METRO_PID" >/dev/null 2>&1
+  [ -n "$METRO_PID" ] && kill "$METRO_PID" >/dev/null 2>&1
+  for _ in $(seq 1 15); do
+    nc -z 127.0.0.1 "$METRO_PORT" 2>/dev/null || break
+    sleep 1
+  done
+  rmdir "$LOCK" 2>/dev/null
+}
+trap cleanup EXIT
+
+if nc -z 127.0.0.1 "$METRO_PORT" 2>/dev/null; then
+  echo "basket-sim: port $METRO_PORT is already in use" >&2
+  exit 1
+fi
+
+[ -d "$CHECKOUT/node_modules" ] || (cd "$CHECKOUT" && npm ci --prefer-offline --no-audit --no-fund >/dev/null) || exit 1
+
+xcrun simctl boot "$SIM_UDID" 2>/dev/null
+xcrun simctl bootstatus "$SIM_UDID" -b >/dev/null || exit 1
+xcrun simctl install "$SIM_UDID" "$HOME_DIR/Basket.app" || exit 1
+xcrun simctl spawn "$SIM_UDID" defaults write "$BUNDLE_ID" RCT_jsLocation "localhost:$METRO_PORT"
+
+(cd "$CHECKOUT" && exec npx expo start --port "$METRO_PORT" </dev/null >"$HOME_DIR/metro.log" 2>&1) &
+METRO_PID=$!
+
+for _ in $(seq 1 60); do
+  curl -s -m 1 "http://localhost:$METRO_PORT/status" | grep -q running && break
+  sleep 1
+done
+
+xcrun simctl terminate "$SIM_UDID" "$BUNDLE_ID" >/dev/null 2>&1
+xcrun simctl launch "$SIM_UDID" "$BUNDLE_ID" -basketCheckoutUser "$USER_KIND" >/dev/null || exit 1
+
+# Metro bundles on first request. Wait for that to finish, then let the app render.
+for _ in $(seq 1 90); do
+  grep -qE 'Bundled [0-9]+ms|Bundled .* index' "$HOME_DIR/metro.log" && break
+  sleep 1
+done
+sleep 5
+
+xcrun simctl io "$SIM_UDID" screenshot "$SHOT" >/dev/null || exit 1
+echo "commit $(git -C "$CHECKOUT" rev-parse --short HEAD 2>/dev/null), user $USER_KIND, screenshot $SHOT"
+ERRORS="$(grep -E 'ERROR' "$HOME_DIR/metro.log" || true)"
+if [ -n "$ERRORS" ]; then
+  echo "$ERRORS"
+else
+  echo "No errors in the app log."
+fi
